@@ -25,3 +25,17 @@ local.properties
 .cxx/
 .idea/
 .DS_Store
+local.properties
+.gradle/
+**/build/
+.cxx/
+.idea/
+.DS_Store
+local.properties
+.gradle/
+**/build/
+.cxx/
+*.jks
+*.keystore
+app/release/
+

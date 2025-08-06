@@ -4,30 +4,53 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.PlayArrow
+
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.*
 import androidx.compose.ui.tooling.preview.Preview
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.*
 
 class MainActivity : ComponentActivity() {
+    
+    private val isRecordingState = mutableStateOf(false)
     
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
         if (isGranted) {
             // Permission granted, can start recording
+            Log.d("MainActivity", "Audio permission granted")
+        } else {
+            Log.d("MainActivity", "Audio permission denied")
         }
     }
     
@@ -36,8 +59,17 @@ class MainActivity : ComponentActivity() {
         setContent {
             VoiceRecorderWearOSTheme {
                 VoiceRecorderScreen(
-                    onStartRecording = { startVoiceRecording() },
-                    onStopRecording = { stopVoiceRecording() }
+                    isRecording = isRecordingState.value,
+                    onStartRecording = { 
+                        isRecordingState.value = true
+                        startVoiceRecording() 
+                    },
+                    onStopRecording = { 
+                        isRecordingState.value = false
+                        stopVoiceRecording() 
+                    },
+                    onSaveRecording = { saveRecording() },
+                    onDeleteRecording = { deleteRecording() }
                 )
             }
         }
@@ -50,10 +82,18 @@ class MainActivity : ComponentActivity() {
                 Manifest.permission.RECORD_AUDIO
             ) == PackageManager.PERMISSION_GRANTED -> {
                 // Permission already granted, start recording
-                val intent = Intent(this, VoiceRecorderService::class.java).apply {
-                    action = "START_RECORDING"
+                try {
+                    Log.d("MainActivity", "Starting voice recording service...")
+                    val intent = Intent(this, VoiceRecorderService::class.java).apply {
+                        action = "START_RECORDING"
+                    }
+                    startForegroundService(intent)
+                    Log.d("MainActivity", "Voice recording service started successfully")
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Failed to start voice recording service", e)
+                    // Show user-friendly error message
+                    // You could add a Toast here if needed
                 }
-                startForegroundService(intent)
             }
             shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO) -> {
                 // Show rationale if needed
@@ -67,8 +107,32 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun stopVoiceRecording() {
+        try {
+            Log.d("MainActivity", "Stopping voice recording service...")
+            val intent = Intent(this, VoiceRecorderService::class.java).apply {
+                action = "STOP_RECORDING"
+            }
+            startService(intent)
+            Log.d("MainActivity", "Voice recording service stop requested")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to stop voice recording service", e)
+        }
+    }
+    
+    private fun saveRecording() {
+        Log.d("MainActivity", "Save recording")
+        // Send intent to service to save and process
         val intent = Intent(this, VoiceRecorderService::class.java).apply {
-            action = "STOP_RECORDING"
+            action = "SAVE_RECORDING"
+        }
+        startService(intent)
+    }
+    
+    private fun deleteRecording() {
+        Log.d("MainActivity", "Delete recording")
+        // Send intent to service to delete
+        val intent = Intent(this, VoiceRecorderService::class.java).apply {
+            action = "DELETE_RECORDING"
         }
         startService(intent)
     }
@@ -76,12 +140,16 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun VoiceRecorderWearOSTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colors = MaterialTheme.colors.copy(
-            primary = Color(0xFF2196F3),
+    androidx.wear.compose.material.MaterialTheme(
+        colors = androidx.wear.compose.material.MaterialTheme.colors.copy(
+            primary = Color(0xFF64B5F6),
             primaryVariant = Color(0xFF1976D2),
-            secondary = Color(0xFFF44336),
-            secondaryVariant = Color(0xFFD32F2F)
+            secondary = Color(0xFFEF5350),
+            secondaryVariant = Color(0xFFD32F2F),
+            surface = Color(0xFF121212),
+            onSurface = Color.White,
+            onPrimary = Color.Black,
+            onSecondary = Color.White
         ),
         content = content
     )
@@ -89,61 +157,270 @@ fun VoiceRecorderWearOSTheme(content: @Composable () -> Unit) {
 
 @Composable
 fun VoiceRecorderScreen(
+    isRecording: Boolean,
     onStartRecording: () -> Unit,
-    onStopRecording: () -> Unit
+    onStopRecording: () -> Unit,
+    onSaveRecording: () -> Unit,
+    onDeleteRecording: () -> Unit
 ) {
-    var isRecording by remember { mutableStateOf(false) }
+    var recordingTime by remember { mutableStateOf(0L) }
+    var hasRecording by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val vibrator = remember { context.getSystemService(Vibrator::class.java) }
     
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = if (isRecording) "Recording..." else "Voice Recorder",
-                style = MaterialTheme.typography.body1,
-                textAlign = TextAlign.Center,
-                color = if (isRecording) Color.Red else MaterialTheme.colors.onSurface
+    // Timer effect
+    LaunchedEffect(isRecording) {
+        while (isRecording) {
+            delay(1000)
+            recordingTime += 1000
+        }
+    }
+    
+    // Reset timer when recording stops
+    LaunchedEffect(isRecording) {
+        if (!isRecording && recordingTime > 0) {
+            hasRecording = true
+        }
+    }
+    
+    Scaffold(
+        timeText = {
+            TimeText(
+                modifier = Modifier.padding(top = 8.dp)
             )
+        }
+    ) {
+        ScalingLazyColumn(
+            modifier = Modifier
+                .fillMaxSize(),
+            autoCentering = AutoCenteringParams(),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             
-            Spacer(modifier = Modifier.height(32.dp))
-            
-            Button(
-                onClick = {
-                    if (isRecording) {
-                        onStopRecording()
-                        isRecording = false
-                    } else {
-                        onStartRecording()
-                        isRecording = true
-                    }
-                },
-                colors = androidx.wear.compose.material.ButtonDefaults.buttonColors(
-                    backgroundColor = if (isRecording) Color.Red else MaterialTheme.colors.primary
-                ),
-                modifier = Modifier.size(80.dp)
-            ) {
-                Text(
-                    text = if (isRecording) "STOP" else "REC",
-                    color = Color.White,
-                    style = MaterialTheme.typography.body2
+            // Timer
+            item {
+                RecordingTimer(
+                    isRecording = isRecording,
+                    recordingTime = recordingTime
                 )
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            // Main recording button
+            item {
+                RecordingButton(
+                    isRecording = isRecording,
+                    onRecordingToggle = {
+                        // Haptic feedback
+                        vibrator?.vibrate(
+                            VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE)
+                        )
+                        
+                        if (isRecording) {
+                            onStopRecording()
+                        } else {
+                            onStartRecording()
+                            recordingTime = 0L
+                        }
+                    }
+                )
+            }
             
-            Text(
-                text = if (isRecording) "Tap to stop" else "Tap to record",
-                style = MaterialTheme.typography.caption1,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+            // Waveform visualization (only when recording)
+            if (isRecording) {
+                item {
+                    WaveformVisualization(isRecording = true)
+                }
+            }
+            
+            // Action buttons (only show when not recording and has recording)
+            item {
+                if (!isRecording && hasRecording) {
+                    ActionButtons(
+                        onSave = {
+                            vibrator?.vibrate(
+                                VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE)
+                            )
+                            onSaveRecording()
+                            hasRecording = false
+                        },
+                        onDelete = {
+                            vibrator?.vibrate(
+                                VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE)
+                            )
+                            onDeleteRecording()
+                            hasRecording = false
+                        }
+                    )
+                }
+            }
+            
+        }
+    }
+}
+
+@Composable
+fun RecordingTimer(
+    isRecording: Boolean,
+    recordingTime: Long
+) {
+    val formattedTime = remember(recordingTime) {
+        val minutes = (recordingTime / 60000).toInt()
+        val seconds = ((recordingTime % 60000) / 1000).toInt()
+        String.format("%02d:%02d", minutes, seconds)
+    }
+    
+    Text(
+        text = if (isRecording) formattedTime else "00:00",
+        style = androidx.wear.compose.material.MaterialTheme.typography.title3.copy(
+            fontWeight = FontWeight.Bold
+        ),
+        color = if (isRecording) androidx.wear.compose.material.MaterialTheme.colors.primary 
+                else androidx.wear.compose.material.MaterialTheme.colors.onSurface.copy(alpha = 0.7f),
+        textAlign = TextAlign.Center
+    )
+}
+
+@Composable
+fun RecordingButton(
+    isRecording: Boolean,
+    onRecordingToggle: () -> Unit
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val scale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = if (isRecording) 1.1f else 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000, easing = EaseInOut),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "scale"
+    )
+    
+    Box(
+        modifier = Modifier
+            .size(88.dp)
+            .scale(scale)
+            .clip(CircleShape)
+            .background(
+                if (isRecording) androidx.wear.compose.material.MaterialTheme.colors.secondary
+                else androidx.wear.compose.material.MaterialTheme.colors.primary
+            )
+            .padding(4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Button(
+            onClick = onRecordingToggle,
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape),
+            colors = androidx.wear.compose.material.ButtonDefaults.buttonColors(
+                backgroundColor = Color.Transparent
+            )
+        ) {
+            androidx.wear.compose.material.Icon(
+                imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
+                contentDescription = if (isRecording) "Stop recording" else "Start recording",
+                modifier = Modifier.size(32.dp),
+                tint = Color.White
             )
         }
+    }
+}
+
+@Composable
+fun WaveformVisualization(isRecording: Boolean) {
+    val infiniteTransition = rememberInfiniteTransition(label = "waveform")
+    val bars = 5
+    
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        repeat(bars) { index ->
+            val height by infiniteTransition.animateFloat(
+                initialValue = 8f,
+                targetValue = if (isRecording) 24f else 8f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(
+                        durationMillis = 600,
+                        delayMillis = index * 100,
+                        easing = EaseInOut
+                    ),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "bar_height_$index"
+            )
+            
+            Box(
+                modifier = Modifier
+                    .width(6.dp)
+                    .height(height.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(
+                        if (isRecording) androidx.wear.compose.material.MaterialTheme.colors.primary
+                        else androidx.wear.compose.material.MaterialTheme.colors.onSurface.copy(alpha = 0.3f)
+                    )
+            )
+        }
+    }
+}
+
+@Composable
+fun ActionButtons(
+    onSave: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Save button
+        Chip(
+            onClick = onSave,
+            label = {
+                Text(
+                    text = "Save",
+                    style = androidx.wear.compose.material.MaterialTheme.typography.body2
+                )
+            },
+            icon = {
+                androidx.wear.compose.material.Icon(
+                    imageVector = Icons.Default.Save,
+                    contentDescription = "Save recording",
+                    modifier = Modifier.size(14.dp)
+                )
+            },
+            colors = ChipDefaults.chipColors(
+                backgroundColor = androidx.wear.compose.material.MaterialTheme.colors.primary,
+                contentColor = androidx.wear.compose.material.MaterialTheme.colors.onPrimary
+            ),
+            modifier = Modifier.height(28.dp)
+        )
+        
+        // Delete button
+        Chip(
+            onClick = onDelete,
+            label = {
+                Text(
+                    text = "Delete",
+                    style = androidx.wear.compose.material.MaterialTheme.typography.body2
+                )
+            },
+            icon = {
+                androidx.wear.compose.material.Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "Delete recording",
+                    modifier = Modifier.size(14.dp)
+                )
+            },
+            colors = ChipDefaults.chipColors(
+                backgroundColor = androidx.wear.compose.material.MaterialTheme.colors.secondary,
+                contentColor = androidx.wear.compose.material.MaterialTheme.colors.onSecondary
+            ),
+            modifier = Modifier.height(28.dp)
+        )
     }
 }
 
@@ -152,8 +429,11 @@ fun VoiceRecorderScreen(
 fun VoiceRecorderPreview() {
     VoiceRecorderWearOSTheme {
         VoiceRecorderScreen(
+            isRecording = false,
             onStartRecording = { /* Preview only */ },
-            onStopRecording = { /* Preview only */ }
+            onStopRecording = { /* Preview only */ },
+            onSaveRecording = { /* Preview only */ },
+            onDeleteRecording = { /* Preview only */ }
         )
     }
 }
@@ -164,47 +444,44 @@ fun VoiceRecorderRecordingPreview() {
     VoiceRecorderWearOSTheme {
         var isRecording by remember { mutableStateOf(true) }
         
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
+        Scaffold(
+            timeText = {
+                            TimeText(
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            }
         ) {
-            Column(
+            ScalingLazyColumn(
+                modifier = Modifier
+                    .fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "Recording...",
-                    style = MaterialTheme.typography.body1,
-                    textAlign = TextAlign.Center,
-                    color = Color.Red
-                )
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
                 
-                Spacer(modifier = Modifier.height(32.dp))
-                
-                Button(
-                    onClick = { isRecording = !isRecording },
-                    colors = androidx.wear.compose.material.ButtonDefaults.buttonColors(
-                        backgroundColor = Color.Red
-                    ),
-                    modifier = Modifier.size(80.dp)
-                ) {
-                    Text(
-                        text = "STOP",
-                        color = Color.White,
-                        style = MaterialTheme.typography.body2
+                item {
+                    RecordingTimer(
+                        isRecording = isRecording,
+                        recordingTime = 45000L
                     )
                 }
                 
-                Spacer(modifier = Modifier.height(16.dp))
+                item {
+                    RecordingButton(
+                        isRecording = isRecording,
+                        onRecordingToggle = { isRecording = !isRecording }
+                    )
+                }
                 
-                Text(
-                    text = "Tap to stop",
-                    style = MaterialTheme.typography.caption1,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
-                )
+                item {
+                    WaveformVisualization(isRecording = isRecording)
+                }
+                
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
             }
         }
     }
