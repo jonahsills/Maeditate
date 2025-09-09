@@ -7,14 +7,17 @@ WORKDIR /app
 # Copy package files
 COPY package.json ./
 
-# Install dependencies (production only)
-RUN npm install --omit=dev --frozen-lockfile=false
+# Install all dependencies (including dev dependencies for build)
+RUN npm install --frozen-lockfile=false
 
 # Copy source code
 COPY . .
 
 # Build TypeScript
 RUN npm run build
+
+# Remove dev dependencies to reduce image size
+RUN npm prune --omit=dev
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs
