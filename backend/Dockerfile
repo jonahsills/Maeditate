@@ -1,5 +1,5 @@
 # Use Node.js 18 Alpine for smaller image size
-FROM node:18-alpine
+FROM node:20-slim
 
 # Set working directory
 WORKDIR /app
@@ -9,6 +9,9 @@ COPY package.json ./
 
 # Install all dependencies (including dev dependencies for build)
 RUN npm install --frozen-lockfile=false
+
+# Install ffmpeg for audio conversion
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # Copy source code
 COPY . .

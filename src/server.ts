@@ -13,6 +13,14 @@ import pool from './config/database';
 // import { runMigrations } from '../scripts/migrate';
 import { localStorageService } from './services/localStorage';
 import { aiService } from './services/ai';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import axios from 'axios';
+import os from 'os';
+import fs from 'fs';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import url from 'url';
 import { 
   AuthRequestSchema, 
   UploadInitSchema, 
@@ -44,6 +52,15 @@ app.use(express.json({ limit: '10mb' }));
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
+
+// S3 client (Option C)
+const s3 = new S3Client({
+  region: process.env.S3_REGION,
+  credentials: process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY ? {
+    accessKeyId: process.env.S3_ACCESS_KEY_ID,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY
+  } : undefined
 });
 
 // Rate limiting
@@ -171,51 +188,53 @@ app.post('/auth/anonymous', async (req, res) => {
   }
 });
 
-// 4.2 Upload init - Get presigned URL for audio upload
+// 4.2 Upload init - Presigned PUT URL (Option C)
 app.post('/v1/upload-init', authenticateToken, (async (req: Request, res: Response) => {
   try {
     const { fileExt, contentType, sessionId } = UploadInitSchema.parse(req.body);
-    
-    // Validate file extension
-    if (!localStorageService.isValidAudioExtension(fileExt)) {
-      return res.status(400).json({ error: 'Invalid audio file extension' });
-    }
-    
-    let sessionIdToUse: string;
     if (!req.user) {
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
     const user = req.user;
 
+    if (!localStorageService.isValidAudioExtension(fileExt)) {
+      return res.status(400).json({ error: 'Invalid audio file extension' });
+    }
+
+    let sessionIdToUse: string;
     if (sessionId) {
       sessionIdToUse = sessionId;
     } else {
-      // Create session if not provided
       const sessionResult = await pool.query(
         'INSERT INTO sessions (user_id, device_id) VALUES ($1, $2) RETURNING id',
         [user.userId, user.deviceId]
       );
       sessionIdToUse = sessionResult.rows[0].id;
     }
-    
-    // Generate unique file key
-    const fileKey = localStorageService.generateFileKey(sessionIdToUse, fileExt);
-    const audioUrl = localStorageService.generatePublicUrl(fileKey);
-    
-    // For local storage, we'll use a simple upload endpoint
-    const uploadUrl = `${process.env.BACKEND_BASE_URL || 'http://localhost:3000'}/v1/upload/${fileKey}`;
-    
+
+    const randomId = Math.random().toString(36).slice(2, 8);
+    const key = `audio/${user.userId}/${sessionIdToUse}/${Date.now()}-${randomId}.${fileExt}`;
+
+    const put = new PutObjectCommand({
+      Bucket: process.env.S3_BUCKET!,
+      Key: key,
+      ContentType: contentType
+    });
+    const uploadUrl = await getSignedUrl(s3, put, { expiresIn: 15 * 60 });
+
+    const publicBase = process.env.PUBLIC_CDN_BASE?.replace(/\/$/, '') || '';
+    const audioUrl = `${publicBase}/${key}`;
+
     const response: UploadInitResponse = {
       sessionId: sessionIdToUse,
       uploadUrl,
       audioUrl
     };
-    
     res.json(response);
   } catch (error: any) {
     console.error('Upload init error:', error);
-    res.status(400).json({ error: 'Invalid request' });
+    res.status(400).json({ error: error.message || 'Invalid request' });
   }
 }) as RequestHandler);
 
@@ -453,7 +472,7 @@ app.get('/v1/sessions/:id', authenticateToken, (async (req: Request, res: Respon
 }) as RequestHandler);
 
 // Background processing functions
-async function processAudioTranscription(transcriptId: string, audioUrl: string, wantSummary: boolean) {
+async function processAudioTranscription(transcriptId: string, audioUrlString: string, wantSummary: boolean) {
   try {
     console.log(`Processing audio transcription for transcript ${transcriptId}`);
     
@@ -463,29 +482,41 @@ async function processAudioTranscription(transcriptId: string, audioUrl: string,
       ['TRANSCRIBING', transcriptId]
     );
     
-    // Extract file key from audio URL
-    const backendBaseUrl = process.env.BACKEND_BASE_URL || 'http://localhost:3000';
-    const fileKey = audioUrl.replace(backendBaseUrl + '/uploads/', '');
-    
-    // Get audio from local storage
-    const audioBuffer = await localStorageService.getFile(fileKey);
-    
-    // Validate audio file
-    const maxSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB || '50');
-    aiService.validateAudioFile(audioBuffer, maxSizeMB);
-    
-    // Transcribe audio
-    const transcription = await aiService.transcribeAudio(audioBuffer, 'audio.m4a');
-    
-    // Update with transcription result
+    let transcribedText = '';
+    let transcribedLanguage = 'en';
+    let transcribedConfidence = 0.95;
+    const isRemote = /^https?:\/\//i.test(audioUrlString);
+    if (isRemote) {
+      const tmpIn = await downloadToTemp(audioUrlString);
+      const tmpOut = await toWav16kMono(tmpIn);
+      const audioBuffer = fs.readFileSync(tmpOut);
+      const maxSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB || '50');
+      aiService.validateAudioFile(audioBuffer, maxSizeMB);
+      const transcription = await aiService.transcribeAudio(audioBuffer, 'audio.wav');
+      transcribedText = transcription.text;
+      transcribedLanguage = transcription.language;
+      transcribedConfidence = transcription.confidence;
+      try { fs.unlinkSync(tmpIn); } catch {}
+      try { fs.unlinkSync(tmpOut); } catch {}
+    } else {
+      const backendBaseUrl = process.env.BACKEND_BASE_URL || 'http://localhost:3000';
+      const fileKey = audioUrlString.replace(backendBaseUrl + '/uploads/', '').replace(/^\/uploads\//, '');
+      const audioBuffer = await localStorageService.getFile(fileKey);
+      const maxSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB || '50');
+      aiService.validateAudioFile(audioBuffer, maxSizeMB);
+      const transcription = await aiService.transcribeAudio(audioBuffer, 'audio.wav');
+      transcribedText = transcription.text;
+      transcribedLanguage = transcription.language;
+      transcribedConfidence = transcription.confidence;
+    }
     await pool.query(
       'UPDATE transcripts SET text = $1, language = $2, confidence = $3, status = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $5',
-      [transcription.text, transcription.language, transcription.confidence, 'SUMMARIZING', transcriptId]
+      [transcribedText, transcribedLanguage, transcribedConfidence, 'SUMMARIZING', transcriptId]
     );
     
     if (wantSummary) {
       // Generate summary
-      const summary = await aiService.generateSummary(transcription.text);
+      const summary = await aiService.generateSummary(transcribedText);
       
       // Store summary
       const sessionResult = await pool.query(
@@ -517,6 +548,30 @@ async function processAudioTranscription(transcriptId: string, audioUrl: string,
       ['FAILED', error.message, transcriptId]
     );
   }
+}
+
+// Helpers (Option C)
+const execFileAsync = promisify(execFile);
+
+async function downloadToTemp(fileUrl: string): Promise<string> {
+  const tmpDir = os.tmpdir();
+  const parsed = new url.URL(fileUrl);
+  const ext = (parsed.pathname.split('.').pop() || 'bin').split('?')[0];
+  const tmpPath = path.join(tmpDir, `aud-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
+  const { data } = await axios.get(fileUrl, { responseType: 'stream' });
+  await new Promise<void>((resolve, reject) => {
+    const out = fs.createWriteStream(tmpPath);
+    data.pipe(out);
+    data.on('error', reject);
+    out.on('finish', () => resolve());
+  });
+  return tmpPath;
+}
+
+async function toWav16kMono(inPath: string): Promise<string> {
+  const outPath = inPath.replace(/\.[^.]+$/, '.wav');
+  await execFileAsync('ffmpeg', ['-y', '-i', inPath, '-ac', '1', '-ar', '16000', outPath]);
+  return outPath;
 }
 
 async function processTextTranscription(transcriptId: string, text: string, wantSummary: boolean) {

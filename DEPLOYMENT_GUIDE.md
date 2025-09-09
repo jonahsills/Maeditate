@@ -128,13 +128,26 @@ curl -X POST https://your-backend-url.com/auth/anonymous \
   -d '{"deviceModel": "Test Watch"}'
 ```
 
-### 3. Test Upload
+### 3. Test Upload (Presigned PUT)
 ```bash
-# Get upload URL
-curl -X POST https://your-backend-url.com/v1/upload-init \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+# Get presigned PUT + public audioUrl
+UP=$(curl -s -X POST https://your-backend-url.com/v1/upload-init \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"fileExt": "m4a", "contentType": "audio/mp4"}'
+  -d '{"fileExt": "m4a", "contentType": "audio/mp4"}')
+
+UPLOAD_URL=$(echo "$UP" | jq -r .uploadUrl)
+AUDIO_URL=$(echo "$UP"  | jq -r .audioUrl)
+
+# Upload bytes directly to storage
+curl -X PUT "$UPLOAD_URL" -H 'Content-Type: audio/mp4' --upload-file ./clip.m4a
+
+# Create transcript
+curl -s -X POST https://your-backend-url.com/v1/transcripts \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H "Content-Type: application/json" \
+  -d "{\"audioUrl\":\"$AUDIO_URL\",\"wantSummary\":true}"
 ```
 
 ## Alternative Deployment Options
