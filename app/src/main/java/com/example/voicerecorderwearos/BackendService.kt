@@ -9,6 +9,7 @@ import java.io.*
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
 import java.util.*
 
 class BackendService(private val context: Context) {
@@ -251,7 +252,7 @@ class BackendService(private val context: Context) {
             val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(responseBody)
             
-            UploadInitResponse(
+            return UploadInitResponse(
                 sessionId = json.getString("sessionId"),
                 uploadUrl = json.getString("uploadUrl"),
                 audioUrl = json.getString("audioUrl")
@@ -325,7 +326,7 @@ class BackendService(private val context: Context) {
             val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(responseBody)
             
-            TranscriptResponse(
+            return TranscriptResponse(
                 ok = json.getBoolean("ok"),
                 sessionId = json.getString("sessionId"),
                 transcriptId = json.getString("transcriptId"),

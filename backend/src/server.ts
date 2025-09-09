@@ -6,9 +6,11 @@ import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
+import multer from 'multer';
+import path from 'path';
 
 import pool from './config/database';
-import { s3Service } from './services/s3';
+import { localStorageService } from './services/localStorage';
 import { aiService } from './services/ai';
 import { 
   AuthRequestSchema, 
@@ -37,6 +39,12 @@ app.use(cors({
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 
+// Configure multer for file uploads
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
+
 // Rate limiting
 const generalLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
@@ -53,6 +61,9 @@ const transcriptLimiter = rateLimit({
 });
 
 app.use(generalLimiter);
+
+// Serve uploaded files
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Auth middleware
 const authenticateToken: RequestHandler = (req, res, next) => {
@@ -126,7 +137,7 @@ app.post('/v1/upload-init', authenticateToken, (async (req: Request, res: Respon
     const { fileExt, contentType, sessionId } = UploadInitSchema.parse(req.body);
     
     // Validate file extension
-    if (!s3Service.isValidAudioExtension(fileExt)) {
+    if (!localStorageService.isValidAudioExtension(fileExt)) {
       return res.status(400).json({ error: 'Invalid audio file extension' });
     }
     
@@ -149,19 +160,11 @@ app.post('/v1/upload-init', authenticateToken, (async (req: Request, res: Respon
     }
     
     // Generate unique file key
-    const fileKey = s3Service.generateFileKey(sessionIdToUse, fileExt);
-    const audioUrl = s3Service.generatePublicUrl(fileKey);
+    const fileKey = localStorageService.generateFileKey(sessionIdToUse, fileExt);
+    const audioUrl = localStorageService.generatePublicUrl(fileKey);
     
-    // Generate presigned URL
-    const uploadUrl = await s3Service.generateUploadUrl(
-      fileKey, 
-      contentType,
-      {
-        sessionId: sessionIdToUse,
-        userId: user.userId,
-        deviceId: user.deviceId
-      }
-    );
+    // For local storage, we'll use a simple upload endpoint
+    const uploadUrl = `${process.env.BACKEND_BASE_URL || 'http://localhost:3000'}/v1/upload/${fileKey}`;
     
     const response: UploadInitResponse = {
       sessionId: sessionIdToUse,
@@ -175,6 +178,26 @@ app.post('/v1/upload-init', authenticateToken, (async (req: Request, res: Respon
     res.status(400).json({ error: 'Invalid request' });
   }
 }) as RequestHandler);
+
+// File upload endpoint
+app.post('/v1/upload/:fileKey', upload.single('audio'), async (req: Request, res: Response) => {
+  try {
+    const { fileKey } = req.params;
+    const file = req.file;
+    
+    if (!file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    
+    // Save file to local storage
+    await localStorageService.saveFile(fileKey, file.buffer);
+    
+    res.json({ success: true, fileKey });
+  } catch (error: any) {
+    console.error('Upload error:', error);
+    res.status(500).json({ error: 'Upload failed' });
+  }
+});
 
 // 4.3 Create transcript - Submit audio for processing
 app.post('/v1/transcripts', authenticateToken, transcriptLimiter, (async (req: Request, res: Response) => {
@@ -400,10 +423,10 @@ async function processAudioTranscription(transcriptId: string, audioUrl: string,
     );
     
     // Extract file key from audio URL
-    const fileKey = audioUrl.replace(process.env.PUBLIC_CDN_BASE + '/', '');
+    const fileKey = audioUrl.replace(process.env.BACKEND_BASE_URL + '/uploads/', '');
     
-    // Download audio from S3
-    const audioBuffer = await s3Service.downloadAudio(fileKey);
+    // Get audio from local storage
+    const audioBuffer = await localStorageService.getFile(fileKey);
     
     // Validate audio file
     const maxSizeMB = parseInt(process.env.MAX_FILE_SIZE_MB || '50');
