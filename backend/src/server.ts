@@ -537,21 +537,9 @@ app.use((req, res) => {
 });
 
 // Start server
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`Voice Recorder Backend running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  
-  // Run database migrations on startup
-  try {
-    console.log('Running database migrations...');
-    const fs = require('fs');
-    const migrationPath = require('path').join(__dirname, '../migrations/001_initial.sql');
-    const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
-    await pool.query(migrationSQL);
-    console.log('✅ Database migrations completed');
-  } catch (error) {
-    console.error('❌ Database migration failed:', error);
-  }
 });
 
 export default app;
