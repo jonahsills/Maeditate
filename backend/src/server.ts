@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -28,6 +28,11 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Extend Express Request with authenticated user
+interface AuthenticatedRequest extends Request {
+  user: JWTPayload;
+}
+
 // Middleware
 app.use(helmet());
 app.use(cors({
@@ -41,21 +46,21 @@ app.use(express.json({ limit: '10mb' }));
 const generalLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15 minutes
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '120'),
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => (req.ip || 'unknown'),
   message: { error: 'Too many requests, please try again later.' }
 });
 
 const transcriptLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
   max: parseInt(process.env.TRANSCRIPT_RATE_LIMIT_MAX || '10'),
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => (req.ip || 'unknown'),
   message: { error: 'Too many transcription requests, please slow down.' }
 });
 
 app.use(generalLimiter);
 
 // Auth middleware
-const authenticateToken = (req: any, res: any, next: any) => {
+const authenticateToken = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -121,7 +126,7 @@ app.post('/auth/anonymous', async (req, res) => {
 });
 
 // 4.2 Upload init - Get presigned URL for audio upload
-app.post('/v1/upload-init', authenticateToken, async (req, res) => {
+app.post('/v1/upload-init', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { fileExt, contentType, sessionId } = UploadInitSchema.parse(req.body);
     
@@ -130,10 +135,11 @@ app.post('/v1/upload-init', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Invalid audio file extension' });
     }
     
-    let sessionIdToUse = sessionId;
-    
-    // Create session if not provided
-    if (!sessionIdToUse) {
+    let sessionIdToUse: string;
+    if (sessionId) {
+      sessionIdToUse = sessionId;
+    } else {
+      // Create session if not provided
       const sessionResult = await pool.query(
         'INSERT INTO sessions (user_id, device_id) VALUES ($1, $2) RETURNING id',
         [req.user.sub, req.user.deviceId]
@@ -170,7 +176,7 @@ app.post('/v1/upload-init', authenticateToken, async (req, res) => {
 });
 
 // 4.3 Create transcript - Submit audio for processing
-app.post('/v1/transcripts', authenticateToken, transcriptLimiter, async (req, res) => {
+app.post('/v1/transcripts', authenticateToken, transcriptLimiter, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const idemKey = req.headers['idempotency-key'] as string;
     if (!idemKey) {
@@ -196,15 +202,16 @@ app.post('/v1/transcripts', authenticateToken, transcriptLimiter, async (req, re
       return res.json(response);
     }
     
-    let sessionId = data.sessionId;
-    
-    // Create session if not provided
-    if (!sessionId) {
+    let sessionIdToUse: string;
+    if (data.sessionId) {
+      sessionIdToUse = data.sessionId;
+    } else {
+      // Create session if not provided
       const sessionResult = await pool.query(
         'INSERT INTO sessions (user_id, device_id) VALUES ($1, $2) RETURNING id',
         [req.user.sub, req.user.deviceId]
       );
-      sessionId = sessionResult.rows[0].id;
+      sessionIdToUse = sessionResult.rows[0].id;
     }
     
     // Create transcript record
@@ -212,7 +219,7 @@ app.post('/v1/transcripts', authenticateToken, transcriptLimiter, async (req, re
       `INSERT INTO transcripts (session_id, idem_key, audio_url, text, language, confidence, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
       [
-        sessionId,
+        sessionIdToUse,
         idemKey,
         data.audioUrl || null,
         data.text || null,
@@ -233,7 +240,7 @@ app.post('/v1/transcripts', authenticateToken, transcriptLimiter, async (req, re
     
     const response: TranscriptResponse = {
       ok: true,
-      sessionId,
+      sessionId: sessionIdToUse,
       transcriptId,
       status: 'PENDING'
     };
@@ -246,7 +253,7 @@ app.post('/v1/transcripts', authenticateToken, transcriptLimiter, async (req, re
 });
 
 // 4.4 Get transcript status - Check processing status
-app.get('/v1/transcripts/:id', authenticateToken, async (req, res) => {
+app.get('/v1/transcripts/:id', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     
@@ -292,7 +299,7 @@ app.get('/v1/transcripts/:id', authenticateToken, async (req, res) => {
 });
 
 // 4.5 List sessions - Get user's sessions
-app.get('/v1/sessions', authenticateToken, async (req, res) => {
+app.get('/v1/sessions', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
     const cursor = req.query.cursor as string;
@@ -336,7 +343,7 @@ app.get('/v1/sessions', authenticateToken, async (req, res) => {
 });
 
 // 4.6 Get session detail - Get session with transcripts
-app.get('/v1/sessions/:id', authenticateToken, async (req, res) => {
+app.get('/v1/sessions/:id', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     
