@@ -546,8 +546,31 @@ app.listen(PORT, async () => {
   try {
     console.log('Running database migrations...');
     const fs = require('fs');
-    const migrationPath = require('path').join(__dirname, '../migrations/001_initial.sql');
-    const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+    const path = require('path');
+    
+    // Try different possible paths for the migration file
+    const possiblePaths = [
+      path.join(__dirname, '../migrations/001_initial.sql'),
+      path.join(process.cwd(), 'migrations/001_initial.sql'),
+      path.join(process.cwd(), 'src/../migrations/001_initial.sql')
+    ];
+    
+    let migrationSQL = null;
+    for (const migrationPath of possiblePaths) {
+      try {
+        console.log(`Trying migration path: ${migrationPath}`);
+        migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+        console.log(`Found migration file at: ${migrationPath}`);
+        break;
+      } catch (err) {
+        console.log(`Migration file not found at: ${migrationPath}`);
+      }
+    }
+    
+    if (!migrationSQL) {
+      throw new Error('Migration file not found in any expected location');
+    }
+    
     await pool.query(migrationSQL);
     console.log('✅ Database migrations completed');
   } catch (error) {
