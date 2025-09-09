@@ -10,7 +10,7 @@ import multer from 'multer';
 import path from 'path';
 
 import pool from './config/database';
-import { runMigrations } from '../scripts/migrate';
+// import { runMigrations } from '../scripts/migrate';
 import { localStorageService } from './services/localStorage';
 import { aiService } from './services/ai';
 import { 
@@ -544,7 +544,10 @@ app.listen(PORT, async () => {
   // Run database migrations on startup
   try {
     console.log('Running database migrations...');
-    await runMigrations();
+    const fs = require('fs');
+    const migrationPath = require('path').join(__dirname, '../migrations/001_initial.sql');
+    const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+    await pool.query(migrationSQL);
     console.log('✅ Database migrations completed');
   } catch (error) {
     console.error('❌ Database migration failed:', error);
