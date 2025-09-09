@@ -93,6 +93,45 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Migration endpoint (for manual migration)
+app.post('/migrate', async (req, res) => {
+  try {
+    console.log('Running database migrations...');
+    const fs = require('fs');
+    const path = require('path');
+    
+    // Try different possible paths for the migration file
+    const possiblePaths = [
+      path.join(__dirname, '../migrations/001_initial.sql'),
+      path.join(process.cwd(), 'migrations/001_initial.sql'),
+      path.join(process.cwd(), 'src/../migrations/001_initial.sql')
+    ];
+    
+    let migrationSQL = null;
+    for (const migrationPath of possiblePaths) {
+      try {
+        console.log(`Trying migration path: ${migrationPath}`);
+        migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+        console.log(`Found migration file at: ${migrationPath}`);
+        break;
+      } catch (err) {
+        console.log(`Migration file not found at: ${migrationPath}`);
+      }
+    }
+    
+    if (!migrationSQL) {
+      throw new Error('Migration file not found in any expected location');
+    }
+    
+    await pool.query(migrationSQL);
+    console.log('✅ Database migrations completed');
+    res.json({ success: true, message: 'Database migrations completed successfully' });
+  } catch (error) {
+    console.error('❌ Database migration failed:', error);
+    res.status(500).json({ error: 'Migration failed', details: error.message });
+  }
+});
+
 // 4.1 Auth - Anonymous user creation
 app.post('/auth/anonymous', async (req, res) => {
   try {
