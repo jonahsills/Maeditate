@@ -424,7 +424,8 @@ async function processAudioTranscription(transcriptId: string, audioUrl: string,
     );
     
     // Extract file key from audio URL
-    const fileKey = audioUrl.replace(process.env.BACKEND_BASE_URL + '/uploads/', '');
+    const backendBaseUrl = process.env.BACKEND_BASE_URL || 'http://localhost:3000';
+    const fileKey = audioUrl.replace(backendBaseUrl + '/uploads/', '');
     
     // Get audio from local storage
     const audioBuffer = await localStorageService.getFile(fileKey);
@@ -537,9 +538,21 @@ app.use((req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Voice Recorder Backend running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  
+  // Run database migrations on startup
+  try {
+    console.log('Running database migrations...');
+    const fs = require('fs');
+    const migrationPath = require('path').join(__dirname, '../migrations/001_initial.sql');
+    const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+    await pool.query(migrationSQL);
+    console.log('✅ Database migrations completed');
+  } catch (error) {
+    console.error('❌ Database migration failed:', error);
+  }
 });
 
 export default app;
