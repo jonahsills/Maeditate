@@ -1,4 +1,4 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -28,11 +28,6 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Extend Express Request with authenticated user
-interface AuthenticatedRequest extends Request {
-  user: JWTPayload;
-}
-
 // Middleware
 app.use(helmet());
 app.use(cors({
@@ -60,7 +55,7 @@ const transcriptLimiter = rateLimit({
 app.use(generalLimiter);
 
 // Auth middleware
-const authenticateToken = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+const authenticateToken: RequestHandler = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -72,7 +67,7 @@ const authenticateToken = (req: AuthenticatedRequest, res: Response, next: NextF
     if (err) {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
-    req.user = user;
+    req.user = { userId: String(user.sub), deviceId: user.deviceId };
     next();
   });
 };
@@ -126,7 +121,7 @@ app.post('/auth/anonymous', async (req, res) => {
 });
 
 // 4.2 Upload init - Get presigned URL for audio upload
-app.post('/v1/upload-init', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/v1/upload-init', authenticateToken, (async (req: Request, res: Response) => {
   try {
     const { fileExt, contentType, sessionId } = UploadInitSchema.parse(req.body);
     
@@ -136,13 +131,19 @@ app.post('/v1/upload-init', authenticateToken, async (req: AuthenticatedRequest,
     }
     
     let sessionIdToUse: string;
+    if (!req.user) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    const user = req.user;
+
     if (sessionId) {
       sessionIdToUse = sessionId;
     } else {
       // Create session if not provided
       const sessionResult = await pool.query(
         'INSERT INTO sessions (user_id, device_id) VALUES ($1, $2) RETURNING id',
-        [req.user.sub, req.user.deviceId]
+        [user.userId, user.deviceId]
       );
       sessionIdToUse = sessionResult.rows[0].id;
     }
@@ -157,8 +158,8 @@ app.post('/v1/upload-init', authenticateToken, async (req: AuthenticatedRequest,
       contentType,
       {
         sessionId: sessionIdToUse,
-        userId: req.user.sub,
-        deviceId: req.user.deviceId
+        userId: user.userId,
+        deviceId: user.deviceId
       }
     );
     
@@ -173,10 +174,10 @@ app.post('/v1/upload-init', authenticateToken, async (req: AuthenticatedRequest,
     console.error('Upload init error:', error);
     res.status(400).json({ error: 'Invalid request' });
   }
-});
+}) as RequestHandler);
 
 // 4.3 Create transcript - Submit audio for processing
-app.post('/v1/transcripts', authenticateToken, transcriptLimiter, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/v1/transcripts', authenticateToken, transcriptLimiter, (async (req: Request, res: Response) => {
   try {
     const idemKey = req.headers['idempotency-key'] as string;
     if (!idemKey) {
@@ -203,13 +204,19 @@ app.post('/v1/transcripts', authenticateToken, transcriptLimiter, async (req: Au
     }
     
     let sessionIdToUse: string;
+    if (!req.user) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    const user = req.user;
+
     if (data.sessionId) {
       sessionIdToUse = data.sessionId;
     } else {
       // Create session if not provided
       const sessionResult = await pool.query(
         'INSERT INTO sessions (user_id, device_id) VALUES ($1, $2) RETURNING id',
-        [req.user.sub, req.user.deviceId]
+        [user.userId, user.deviceId]
       );
       sessionIdToUse = sessionResult.rows[0].id;
     }
@@ -250,10 +257,10 @@ app.post('/v1/transcripts', authenticateToken, transcriptLimiter, async (req: Au
     console.error('Transcript creation error:', error);
     res.status(400).json({ error: 'Invalid request' });
   }
-});
+}) as RequestHandler);
 
 // 4.4 Get transcript status - Check processing status
-app.get('/v1/transcripts/:id', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/v1/transcripts/:id', authenticateToken, (async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     
@@ -296,10 +303,10 @@ app.get('/v1/transcripts/:id', authenticateToken, async (req: AuthenticatedReque
     console.error('Transcript status error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
-});
+}) as RequestHandler);
 
 // 4.5 List sessions - Get user's sessions
-app.get('/v1/sessions', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/v1/sessions', authenticateToken, (async (req: Request, res: Response) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
     const cursor = req.query.cursor as string;
@@ -313,7 +320,12 @@ app.get('/v1/sessions', authenticateToken, async (req: AuthenticatedRequest, res
       WHERE s.user_id = $1
     `;
     
-    const params: any[] = [req.user.sub];
+    if (!req.user) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    const user = req.user;
+    const params: any[] = [user.userId];
     
     if (cursor) {
       query += ' AND s.created_at < $2';
@@ -340,16 +352,16 @@ app.get('/v1/sessions', authenticateToken, async (req: AuthenticatedRequest, res
     console.error('Sessions list error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
-});
+}) as RequestHandler);
 
 // 4.6 Get session detail - Get session with transcripts
-app.get('/v1/sessions/:id', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+app.get('/v1/sessions/:id', authenticateToken, (async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     
     const sessionResult = await pool.query(
       'SELECT * FROM sessions WHERE id = $1 AND user_id = $2',
-      [id, req.user.sub]
+      [id, (req.user as Express.UserPayload).userId]
     );
     
     if (sessionResult.rows.length === 0) {
@@ -374,7 +386,7 @@ app.get('/v1/sessions/:id', authenticateToken, async (req: AuthenticatedRequest,
     console.error('Session detail error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
-});
+}) as RequestHandler);
 
 // Background processing functions
 async function processAudioTranscription(transcriptId: string, audioUrl: string, wantSummary: boolean) {
