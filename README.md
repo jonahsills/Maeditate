@@ -1,127 +1,177 @@
-# Voice Recorder Wear OS
+# Voice Recorder Backend
 
-A modern voice recording app for Wear OS with AI processing capabilities, featuring real-time transcription and intelligent summarization.
+Backend API for the Voice Recorder Wear OS app, providing secure AI processing, file storage, and user session management.
 
 ## Features
 
-### Modern Wear OS UI
-- **Material3 Design**: Clean, modern interface using Material3 components
-- **Round Screen Optimized**: Layout designed specifically for round Wear OS displays
-- **Dynamic Spacing**: Proper padding and spacing for small screens
-- **Dark Theme**: Optimized dark theme with proper color contrast
+- 🔐 **JWT Authentication** - Anonymous user creation with 7-day tokens
+- 🎤 **Audio Processing** - Server-side transcription using OpenAI Whisper
+- 📝 **AI Summarization** - Intelligent summaries using Google Gemini
+- 📁 **File Storage** - S3-compatible storage for audio files
+- 🔄 **Idempotency** - Prevents duplicate processing
+- ⚡ **Rate Limiting** - Protects against abuse
+- 📊 **Session Management** - Track user sessions and recordings
+- 🌐 **CORS Support** - Works with web portals
 
-### Recording Interface
-- **Centered Mic Button**: Large, easily tappable circular recording button
-- **Pulsing Animation**: Visual feedback with pulsing animation during recording
-- **Timer Display**: Real-time recording timer (MM:SS format)
-- **Waveform Visualization**: Animated waveform bars showing recording activity
-- **Haptic Feedback**: Tactile feedback on button interactions
+## Quick Start
 
-### AI Processing Capabilities
-- **Real-time Transcription**: Converts speech to text using OpenAI Whisper API
-- **Intelligent Summarization**: Generates AI-powered summaries using Google Gemini
-- **Local File Storage**: Saves transcriptions and summaries to device storage
-- **Multiple Audio Formats**: Supports WAV, MP3, and other audio formats
-- **Fallback Processing**: Graceful handling when AI services are unavailable
+### 1. Prerequisites
 
-### Action Controls
-- **Save/Delete Buttons**: Chip-style action buttons for managing recordings
-- **Accessibility**: Proper content descriptions for screen readers
-- **Visual States**: Clear visual feedback for different app states
+- Node.js 18+
+- PostgreSQL database
+- S3-compatible storage (AWS S3, Cloudflare R2, etc.)
+- OpenAI API key
+- Google Gemini API key
 
-### Background Processing
-- **Foreground Service**: Continuous recording with persistent notification
-- **Background Processing**: AI processing continues even when app is minimized
-- **Service Lifecycle Management**: Proper start/stop handling for Wear OS
+### 2. Installation
 
-## Technical Architecture
-
-### Core Components
-- **MainActivity**: Jetpack Compose UI with Material3 design
-- **VoiceRecorderService**: Background service for audio recording
-- **AIProcessingService**: Handles transcription and summarization
-- **AudioConverter**: Converts audio formats for AI processing
-
-### Audio Processing
-- **MediaRecorder**: High-quality audio recording (AAC format, 16kHz, mono)
-- **File Management**: Automatic file naming with timestamps
-- **Format Conversion**: On-device audio format conversion for AI APIs
-
-### AI Integration
-- **OpenAI Whisper**: Speech-to-text transcription
-- **Google Gemini**: AI-powered content summarization
-- **API Key Management**: Secure API key handling via BuildConfig
-- **Error Handling**: Robust error handling with fallback options
-
-## UI Components
-
-### Main Screen Layout
-- `Scaffold` with `TimeText` at the top
-- `ScalingLazyColumn` for scrollable content
-- Proper content padding for round screens
-
-### Recording Button
-- Circular design with pulsing animation
-- Mic icon for recording, Stop icon when active
-- Large touch target (88dp) for easy interaction
-- Color changes based on recording state
-
-### Timer Display
-- Bold typography for easy reading
-- Color changes to indicate recording state
-- Real-time updates during recording
-
-### Waveform Visualization
-- 5 animated bars showing recording activity
-- Staggered animation timing for realistic effect
-- Color changes based on recording state
-
-### Action Buttons
-- Chip-style buttons with icons and labels
-- Save (blue) and Delete (red) options
-- Only visible when recording is complete
-
-## Color Scheme
-- **Primary**: Light blue (#64B5F6) for active states
-- **Surface**: Dark gray (#121212) for background
-- **Error**: Red (#EF5350) for delete actions
-- **Surface Variant**: Medium gray (#1E1E1E) for secondary elements
-
-## Permissions
-- **RECORD_AUDIO**: Audio recording capability
-- **WRITE_EXTERNAL_STORAGE**: Save recordings to device
-- **INTERNET**: AI processing and transcription
-- **FOREGROUND_SERVICE**: Background recording service
-- **VIBRATE**: Haptic feedback
-
-## Dependencies
-- `androidx.wear.compose:compose-material:1.2.1`
-- `androidx.wear.compose:compose-foundation:1.2.1`
-- `androidx.compose.material3:material3:1.1.2`
-- `com.google.ai.client.generativeai:generativeai:0.1.1`
-- `com.squareup.okhttp3:okhttp:4.12.0`
-- `androidx.media:media:1.7.0`
-
-## Setup Requirements
-
-### API Keys
-The app requires API keys for AI processing. Add the following to your `local.properties` file:
-```
-GEMINI_API_KEY=your_gemini_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
+```bash
+cd backend
+npm install
 ```
 
-### Build Requirements
-- Android SDK 26+
-- Kotlin 1.9.0+
-- Jetpack Compose 1.5.4+
-- Targets Wear OS devices with round displays
+### 3. Environment Setup
 
-## Building
-The app requires Android SDK 26+ and targets Wear OS devices with round displays. Make sure to add your API keys to `local.properties` before building.
+Copy `env.example` to `.env` and fill in your values:
 
-## Features in Development
-- Cloud storage integration
-- Multiple language support
-- Advanced audio processing options
-- Wear OS companion app integration 
+```bash
+cp env.example .env
+```
+
+Required environment variables:
+- `DATABASE_URL` - PostgreSQL connection string
+- `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` - S3 configuration
+- `GEMINI_API_KEY` - Google Gemini API key
+- `OPENAI_API_KEY` - OpenAI API key
+- `JWT_SECRET` - Secret key for JWT signing
+
+### 4. Database Setup
+
+Run migrations to create the database schema:
+
+```bash
+npm run migrate
+```
+
+### 5. Development
+
+```bash
+npm run dev
+```
+
+The server will start on `http://localhost:3000`
+
+## API Endpoints
+
+### Authentication
+- `POST /auth/anonymous` - Create anonymous user and get JWT token
+
+### File Upload
+- `POST /v1/upload-init` - Get presigned URL for audio upload
+
+### Transcription
+- `POST /v1/transcripts` - Submit audio for transcription
+- `GET /v1/transcripts/:id` - Get transcription status and results
+
+### Sessions
+- `GET /v1/sessions` - List user sessions
+- `GET /v1/sessions/:id` - Get session details
+
+### Health
+- `GET /health` - Health check endpoint
+
+## Deployment
+
+### Railway (Recommended)
+
+1. Connect your GitHub repository to Railway
+2. Add environment variables in Railway dashboard
+3. Deploy automatically on push
+
+### Render
+
+1. Connect your GitHub repository to Render
+2. Use the provided `render.yaml` configuration
+3. Add environment variables in Render dashboard
+
+### Docker
+
+```bash
+docker build -t voice-recorder-backend .
+docker run -p 3000:3000 --env-file .env voice-recorder-backend
+```
+
+## Architecture
+
+```
+Watch App → Backend API → AI Services
+    ↓           ↓            ↓
+Offline Queue → Database → File Storage
+```
+
+### Components
+
+- **Express Server** - REST API with authentication and rate limiting
+- **PostgreSQL** - User sessions, transcripts, and summaries
+- **S3 Storage** - Audio file storage with presigned URLs
+- **Background Jobs** - Async processing for transcription and summarization
+- **JWT Auth** - Secure token-based authentication
+
+### Data Flow
+
+1. **Authentication**: Watch gets JWT token for anonymous user
+2. **Upload**: Watch gets presigned URL, uploads audio to S3
+3. **Processing**: Backend downloads audio, transcribes with Whisper
+4. **Summarization**: Backend generates summary with Gemini
+5. **Storage**: Results stored in database, accessible via API
+
+## Security
+
+- JWT tokens expire after 7 days
+- Rate limiting prevents abuse
+- CORS configured for specific origins
+- Input validation with Zod schemas
+- Idempotency keys prevent duplicate processing
+- API keys stored securely on server
+
+## Monitoring
+
+- Health check endpoint at `/health`
+- Structured logging with Morgan
+- Error tracking and reporting
+- Database connection monitoring
+
+## Development
+
+### Project Structure
+
+```
+backend/
+├── src/
+│   ├── config/          # Database configuration
+│   ├── services/        # AI and S3 services
+│   ├── types/           # TypeScript type definitions
+│   └── server.ts        # Main server file
+├── migrations/          # Database migrations
+├── scripts/             # Utility scripts
+└── package.json
+```
+
+### Scripts
+
+- `npm run dev` - Start development server with hot reload
+- `npm run build` - Build TypeScript to JavaScript
+- `npm start` - Start production server
+- `npm run migrate` - Run database migrations
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## License
+
+MIT License - see LICENSE file for details
