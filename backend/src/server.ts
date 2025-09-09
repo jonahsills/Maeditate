@@ -10,6 +10,7 @@ import multer from 'multer';
 import path from 'path';
 
 import pool from './config/database';
+import { runMigrations } from '../scripts/migrate';
 import { localStorageService } from './services/localStorage';
 import { aiService } from './services/ai';
 import { 
@@ -536,9 +537,18 @@ app.use((req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Voice Recorder Backend running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  
+  // Run database migrations on startup
+  try {
+    console.log('Running database migrations...');
+    await runMigrations();
+    console.log('✅ Database migrations completed');
+  } catch (error) {
+    console.error('❌ Database migration failed:', error);
+  }
 });
 
 export default app;
