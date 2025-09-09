@@ -24,7 +24,7 @@ class VoiceRecorderService : Service() {
     }
     
     private var mediaRecorder: MediaRecorder? = null
-    private val aiProcessingService = AIProcessingService(this)
+    private val backendService = BackendService(this)
     private var isRecording = false
     private var outputFile: File? = null
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -168,8 +168,16 @@ class VoiceRecorderService : Service() {
         outputFile?.let { file ->
             Log.d(TAG, "Saving recording: ${file.absolutePath}")
             serviceScope.launch {
-                aiProcessingService.processRecording(file)
-                // Delete raw audio after summary is saved
+                try {
+                    backendService.processRecording(file)
+                    Log.d(TAG, "Backend processing completed successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Backend processing failed", e)
+                    // Fallback to local processing if backend fails
+                    val aiProcessingService = AIProcessingService(this@VoiceRecorderService)
+                    aiProcessingService.processRecording(file)
+                }
+                // Delete raw audio after processing is complete
                 if (file.exists()) file.delete()
                 outputFile = null
                 stopSelf()

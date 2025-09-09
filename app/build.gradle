@@ -14,6 +14,7 @@ if (localPropertiesFile.exists()) {
 
 def GEMINI_API_KEY = localProperties.getProperty("GEMINI_API_KEY", "")
 def OPENAI_API_KEY = localProperties.getProperty("OPENAI_API_KEY", "")
+def BACKEND_BASE_URL = localProperties.getProperty("BACKEND_BASE_URL", "https://your-backend-url.com")
 
 android {
     namespace 'com.example.voicerecorderwearos'
@@ -26,9 +27,10 @@ android {
         versionCode 1
         versionName "1.0"
 
-        // Inject API keys from local.properties into BuildConfig
+        // Inject API keys and backend URL from local.properties into BuildConfig
         buildConfigField "String", "GEMINI_API_KEY", "\"${GEMINI_API_KEY}\""
         buildConfigField "String", "OPENAI_API_KEY", "\"${OPENAI_API_KEY}\""
+        buildConfigField "String", "BACKEND_BASE_URL", "\"${BACKEND_BASE_URL}\""
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
