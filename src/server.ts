@@ -220,9 +220,10 @@ app.post('/v1/upload-init', authenticateToken, (async (req: Request, res: Respon
 }) as RequestHandler);
 
 // File upload endpoint
-app.post('/v1/upload/:fileKey', upload.single('audio'), async (req: Request, res: Response) => {
+// Accept nested file keys like audio/<session>/<filename>
+app.post('/v1/upload/*', upload.single('audio'), async (req: Request, res: Response) => {
   try {
-    const { fileKey } = req.params;
+    const fileKey = (req.params as any)[0] as string;
     const file = req.file;
     
     if (!file) {
