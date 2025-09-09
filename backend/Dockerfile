@@ -22,13 +22,10 @@ RUN npm run build
 # Remove dev dependencies to reduce image size
 RUN npm prune --omit=dev
 
-# Create non-root user for security
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
-
-# Change ownership of the app directory
-RUN chown -R nodejs:nodejs /app
-USER nodejs
+# Use built-in non-root 'node' user on Debian-based images
+# Change ownership of the app directory and drop privileges
+RUN chown -R node:node /app
+USER node
 
 # Expose port
 EXPOSE 3000
