@@ -72,31 +72,8 @@ export class AIService {
   async generateSummary(text: string): Promise<GeminiResponse> {
     const prompt = `You are a concise meditation note summarizer. Summarize the following session in ≤ 80 words with a positive tone.\n\nText: ${text}`;
 
-    try {
-      const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`,
-        {
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            maxOutputTokens: 256,
-            temperature: 0.7,
-            topP: 0.8,
-            topK: 40
-          }
-        },
-        {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 30000
-        }
-      );
-
-      const generatedText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (generatedText && typeof generatedText === 'string' && generatedText.trim().length > 0) {
-        return { text: generatedText.trim(), model: 'gemini-1.5-flash' };
-      }
-      throw new Error('Empty response from Gemini');
-    } catch (geminiError: any) {
-      console.error('Gemini summarization error:', geminiError?.response?.data || geminiError?.message);
+    // Prefer OpenAI if key is available (more broadly available); fallback to Gemini
+    if (this.openaiApiKey) {
       try {
         const openaiResp = await axios.post(
           'https://api.openai.com/v1/chat/completions',
@@ -117,18 +94,44 @@ export class AIService {
             timeout: 30000
           }
         );
-
         const openaiText = openaiResp.data?.choices?.[0]?.message?.content;
-        if (!openaiText) {
-          throw new Error('No summary generated from OpenAI');
+        if (openaiText) {
+          return { text: String(openaiText).trim(), model: 'gpt-4o-mini' };
         }
-        return { text: String(openaiText).trim(), model: 'gpt-4o-mini' };
       } catch (openaiError: any) {
         console.error('OpenAI summarization error:', openaiError?.response?.data || openaiError?.message);
-        const msg = openaiError?.response?.data?.error?.message || openaiError?.message || 'Unknown error';
-        throw new Error(`Summarization failed: ${msg}`);
       }
     }
+
+    // Fallback to Gemini if OpenAI not available or failed
+    if (this.geminiApiKey) {
+      try {
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`,
+          {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              maxOutputTokens: 256,
+              temperature: 0.7,
+              topP: 0.8,
+              topK: 40
+            }
+          },
+          {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 30000
+          }
+        );
+        const generatedText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (generatedText) {
+          return { text: generatedText.trim(), model: 'gemini-1.5-flash' };
+        }
+      } catch (geminiError: any) {
+        console.error('Gemini summarization error:', geminiError?.response?.data || geminiError?.message);
+      }
+    }
+
+    throw new Error('Summarization failed: No provider succeeded');
   }
 
   /**
