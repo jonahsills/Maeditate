@@ -67,22 +67,16 @@ export class AIService {
   }
 
   /**
-   * Generate summary using Gemini API
+   * Generate summary using Gemini API with OpenAI fallback
    */
   async generateSummary(text: string): Promise<GeminiResponse> {
+    const prompt = `You are a concise meditation note summarizer. Summarize the following session in ≤ 80 words with a positive tone.\n\nText: ${text}`;
+
     try {
-      const prompt = `You are a concise meditation note summarizer. Summarize the following session in ≤ 80 words with a positive tone.
-
-Text: ${text}`;
-
       const response = await axios.post(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`,
         {
-          contents: [{
-            parts: [{
-              text: prompt
-            }]
-          }],
+          contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
             maxOutputTokens: 256,
             temperature: 0.7,
@@ -91,26 +85,49 @@ Text: ${text}`;
           }
         },
         {
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000, // 30 seconds
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 30000
         }
       );
 
       const generatedText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      
-      if (!generatedText) {
-        throw new Error('No summary generated from Gemini');
+      if (generatedText && typeof generatedText === 'string' && generatedText.trim().length > 0) {
+        return { text: generatedText.trim(), model: 'gemini-1.5-flash' };
       }
+      throw new Error('Empty response from Gemini');
+    } catch (geminiError: any) {
+      console.error('Gemini summarization error:', geminiError?.response?.data || geminiError?.message);
+      try {
+        const openaiResp = await axios.post(
+          'https://api.openai.com/v1/chat/completions',
+          {
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: 'You summarize meditation session notes concisely in ≤ 80 words with a positive tone.' },
+              { role: 'user', content: text }
+            ],
+            max_tokens: 256,
+            temperature: 0.7
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${this.openaiApiKey}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 30000
+          }
+        );
 
-      return {
-        text: generatedText.trim(),
-        model: 'gemini-1.5-flash'
-      };
-    } catch (error: any) {
-      console.error('Gemini summarization error:', error.response?.data || error.message);
-      throw new Error(`Summarization failed: ${error.response?.data?.error?.message || error.message}`);
+        const openaiText = openaiResp.data?.choices?.[0]?.message?.content;
+        if (!openaiText) {
+          throw new Error('No summary generated from OpenAI');
+        }
+        return { text: String(openaiText).trim(), model: 'gpt-4o-mini' };
+      } catch (openaiError: any) {
+        console.error('OpenAI summarization error:', openaiError?.response?.data || openaiError?.message);
+        const msg = openaiError?.response?.data?.error?.message || openaiError?.message || 'Unknown error';
+        throw new Error(`Summarization failed: ${msg}`);
+      }
     }
   }
 
