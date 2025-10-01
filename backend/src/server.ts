@@ -13,7 +13,7 @@ import pool from './config/database';
 // import { runMigrations } from '../scripts/migrate';
 import { localStorageService } from './services/localStorage';
 import { aiService } from './services/ai';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import axios from 'axios';
 import os from 'os';
@@ -535,11 +535,23 @@ async function downloadToTemp(fileUrl: string): Promise<string> {
   const parsed = new url.URL(fileUrl);
   const ext = (parsed.pathname.split('.').pop() || 'bin').split('?')[0];
   const tmpPath = path.join(tmpDir, `aud-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
-  const { data } = await axios.get(fileUrl, { responseType: 'stream' });
+
+  // Derive S3 key from PUBLIC_CDN_BASE if provided; otherwise from path
+  const publicBase = (process.env.PUBLIC_CDN_BASE || '').replace(/\/$/, '');
+  let key = parsed.pathname.replace(/^\//, '');
+  if (publicBase && fileUrl.startsWith(publicBase + '/')) {
+    key = fileUrl.slice(publicBase.length + 1);
+  }
+
+  const bucket = process.env.S3_BUCKET!;
+  const resp = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!resp.Body) throw new Error('No body in S3 response');
+
+  const bodyStream = resp.Body as unknown as NodeJS.ReadableStream;
   await new Promise<void>((resolve, reject) => {
     const out = fs.createWriteStream(tmpPath);
-    data.pipe(out);
-    data.on('error', reject);
+    bodyStream.pipe(out);
+    bodyStream.on('error', reject);
     out.on('finish', () => resolve());
   });
   return tmpPath;
