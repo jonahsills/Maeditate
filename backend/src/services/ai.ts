@@ -72,7 +72,35 @@ export class AIService {
   async generateSummary(text: string): Promise<GeminiResponse> {
     const prompt = `You are a concise meditation note summarizer. Summarize the following session in ≤ 80 words with a positive tone.\n\nText: ${text}`;
 
-    // Prefer OpenAI if key is available (more broadly available); fallback to Gemini
+    // Gemini first
+    if (this.geminiApiKey) {
+      try {
+        const response = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`,
+          {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              maxOutputTokens: 256,
+              temperature: 0.7,
+              topP: 0.8,
+              topK: 40
+            }
+          },
+          {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 30000
+          }
+        );
+        const generatedText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (generatedText) {
+          return { text: generatedText.trim(), model: 'gemini-1.5-flash' };
+        }
+      } catch (geminiError: any) {
+        console.error('Gemini summarization error:', geminiError?.response?.data || geminiError?.message);
+      }
+    }
+
+    // OpenAI fallback
     if (this.openaiApiKey) {
       try {
         const openaiResp = await axios.post(
@@ -100,34 +128,6 @@ export class AIService {
         }
       } catch (openaiError: any) {
         console.error('OpenAI summarization error:', openaiError?.response?.data || openaiError?.message);
-      }
-    }
-
-    // Fallback to Gemini if OpenAI not available or failed
-    if (this.geminiApiKey) {
-      try {
-        const response = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.geminiApiKey}`,
-          {
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              maxOutputTokens: 256,
-              temperature: 0.7,
-              topP: 0.8,
-              topK: 40
-            }
-          },
-          {
-            headers: { 'Content-Type': 'application/json' },
-            timeout: 30000
-          }
-        );
-        const generatedText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (generatedText) {
-          return { text: generatedText.trim(), model: 'gemini-1.5-flash' };
-        }
-      } catch (geminiError: any) {
-        console.error('Gemini summarization error:', geminiError?.response?.data || geminiError?.message);
       }
     }
 
