@@ -546,7 +546,7 @@ async function downloadToTemp(fileUrl: string): Promise<string> {
 }
 
 async function toWav16kMono(inPath: string): Promise<string> {
-  const outPath = inPath.replace(/\.[^.]+$/, '.wav');
+  const outPath = inPath.replace(/\.[^.]+$/, '-converted.wav');
   await execFileAsync('ffmpeg', ['-y', '-i', inPath, '-ac', '1', '-ar', '16000', outPath]);
   return outPath;
 }
