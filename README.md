@@ -6,6 +6,7 @@ A complete voice recording app for Wear OS with AI processing capabilities, feat
 
 ✅ **Backend deployed** at `https://maeditate-production.up.railway.app`  
 ✅ **Database migrated** with all tables created  
+✅ **S3 storage configured** with private bucket and presigned URLs  
 ✅ **API tested** - authentication, transcription, and summarization working  
 ✅ **Android app built** and ready for installation  
 
@@ -15,7 +16,7 @@ A complete voice recording app for Wear OS with AI processing capabilities, feat
 - **URL**: `https://maeditate-production.up.railway.app`
 - **Health Check**: `GET /health`
 - **Database**: PostgreSQL on Railway
-- **Storage**: Local file storage (no S3 required)
+- **Storage**: AWS S3 with private bucket and presigned URLs
 
 ### Android App
 1. **Install on your Wear OS device**:
@@ -36,21 +37,18 @@ curl -X POST https://maeditate-production.up.railway.app/auth/anonymous \
   -H "Content-Type: application/json" \
   -d '{"deviceModel":"Wear OS"}'
 
-# Create transcript with AI summary
-curl -X POST https://maeditate-production.up.railway.app/v1/transcripts \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Idempotency-Key: test-1" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Hello from the watch app test.","language":"en","wantSummary":true}'
+# Test complete Option C flow (presigned S3 upload)
+./test_option_c.sh
 ```
 
 ## 📱 What's Working
 
 ### Backend API
 - ✅ JWT Authentication (7-day tokens)
-- ✅ Audio file upload and storage
+- ✅ **Option C S3 Integration** - Presigned PUT URLs for direct S3 upload
+- ✅ **Private S3 Bucket** - Secure audio storage with AWS SDK download
 - ✅ OpenAI Whisper transcription
-- ✅ Google Gemini summarization
+- ✅ **Gemini-first summarization** with OpenAI fallback
 - ✅ Session management
 - ✅ Rate limiting and security
 - ✅ Health monitoring
@@ -68,79 +66,42 @@ curl -X POST https://maeditate-production.up.railway.app/v1/transcripts \
 
 - 🔐 **JWT Authentication** - Anonymous user creation with 7-day tokens
 - 🎤 **Audio Processing** - Server-side transcription using OpenAI Whisper
-- 📝 **AI Summarization** - Intelligent summaries using Google Gemini
-- 📁 **File Storage** - S3-compatible storage for audio files
+- 📝 **AI Summarization** - Gemini-first with OpenAI fallback
+- 📁 **S3 Storage** - Private bucket with presigned URLs (Option C)
 - 🔄 **Idempotency** - Prevents duplicate processing
 - ⚡ **Rate Limiting** - Protects against abuse
 - 📊 **Session Management** - Track user sessions and recordings
 - 🌐 **CORS Support** - Works with web portals
 
-## Quick Start
+## 🏗️ Architecture
 
-### 1. Prerequisites
-
-- Node.js 18+
-- PostgreSQL database
-- S3-compatible storage (AWS S3, Cloudflare R2, etc.)
-- OpenAI API key
-- Google Gemini API key
-
-### 2. Installation
-
-```bash
-cd backend
-npm install
+### Option C: Presigned S3 Upload Flow
+```
+Watch App → Backend API → S3 Storage
+    ↓           ↓            ↓
+Get Token → Upload Init → Presigned URL
+    ↓           ↓            ↓
+Upload Audio → Direct S3 → Private Bucket
+    ↓           ↓            ↓
+Create Job → Backend Download → Process
 ```
 
-### 3. Environment Setup
+### Components
 
-Copy `env.example` to `.env` and fill in your values:
+- **Express Server** - REST API with authentication and rate limiting
+- **PostgreSQL** - User sessions, transcripts, and summaries
+- **AWS S3** - Private bucket with presigned URLs for secure uploads
+- **Background Jobs** - Async processing for transcription and summarization
+- **JWT Auth** - Secure token-based authentication
 
-```bash
-cp env.example .env
-```
+### Data Flow
 
-Required environment variables:
-- `DATABASE_URL` - PostgreSQL connection string
-- `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` - S3 configuration
-- `GEMINI_API_KEY` - Google Gemini API key
-- `OPENAI_API_KEY` - OpenAI API key
-- `JWT_SECRET` - Secret key for JWT signing
-
-### 4. Database Setup
-
-Run migrations to create the database schema:
-
-```bash
-npm run migrate
-```
-
-### 5. Development
-
-```bash
-npm run dev
-```
-
-The server will start on `http://localhost:3000`
-
-## API Endpoints
-
-### Authentication
-- `POST /auth/anonymous` - Create anonymous user and get JWT token
-
-### File Upload
-- `POST /v1/upload-init` - Get presigned URL for audio upload
-
-### Transcription
-- `POST /v1/transcripts` - Submit audio for transcription
-- `GET /v1/transcripts/:id` - Get transcription status and results
-
-### Sessions
-- `GET /v1/sessions` - List user sessions
-- `GET /v1/sessions/:id` - Get session details
-
-### Health
-- `GET /health` - Health check endpoint
+1. **Authentication**: Watch gets JWT token for anonymous user
+2. **Upload Init**: Watch requests presigned S3 URL from backend
+3. **Direct Upload**: Watch uploads audio directly to S3 (bypassing backend)
+4. **Processing**: Backend downloads from private S3, transcribes with Whisper
+5. **Summarization**: Backend generates summary with Gemini (OpenAI fallback)
+6. **Storage**: Results stored in database, accessible via API
 
 ## 🛠️ Deployment (Already Complete)
 
@@ -156,9 +117,20 @@ DATABASE_URL=postgresql://... (Railway managed)
 JWT_SECRET=configured
 GEMINI_API_KEY=configured
 OPENAI_API_KEY=configured
-BACKEND_BASE_URL=https://maeditate-production.up.railway.app
+S3_REGION=us-east-2
+S3_BUCKET=maeditate-audio
+S3_ACCESS_KEY_ID=configured
+S3_SECRET_ACCESS_KEY=configured
+PUBLIC_CDN_BASE=https://maeditate-audio.s3.us-east-2.amazonaws.com
 NODE_ENV=production
 ```
+
+### S3 Configuration ✅
+- **Bucket**: `maeditate-audio` (private)
+- **Region**: `us-east-2`
+- **Access**: IAM user with PutObject/GetObject permissions
+- **Security**: Block public access enabled
+- **Flow**: Presigned PUT URLs for direct client upload
 
 ### Database Schema (Migrated)
 - ✅ Users table
@@ -168,29 +140,25 @@ NODE_ENV=production
 - ✅ Summaries table
 - ✅ All indexes and triggers
 
-## Architecture
+## API Endpoints
 
-```
-Watch App → Backend API → AI Services
-    ↓           ↓            ↓
-Offline Queue → Database → File Storage
-```
+### Authentication
+- `POST /auth/anonymous` - Create anonymous user and get JWT token
 
-### Components
+### File Upload (Option C)
+- `POST /v1/upload-init` - Get presigned S3 URL for direct upload
+- Returns: `{ sessionId, uploadUrl, audioUrl }`
 
-- **Express Server** - REST API with authentication and rate limiting
-- **PostgreSQL** - User sessions, transcripts, and summaries
-- **S3 Storage** - Audio file storage with presigned URLs
-- **Background Jobs** - Async processing for transcription and summarization
-- **JWT Auth** - Secure token-based authentication
+### Transcription
+- `POST /v1/transcripts` - Submit audio URL for transcription
+- `GET /v1/transcripts/:id` - Get transcription status and results
 
-### Data Flow
+### Sessions
+- `GET /v1/sessions` - List user sessions
+- `GET /v1/sessions/:id` - Get session details
 
-1. **Authentication**: Watch gets JWT token for anonymous user
-2. **Upload**: Watch gets presigned URL, uploads audio to S3
-3. **Processing**: Backend downloads audio, transcribes with Whisper
-4. **Summarization**: Backend generates summary with Gemini
-5. **Storage**: Results stored in database, accessible via API
+### Health
+- `GET /health` - Health check endpoint
 
 ## Security
 
@@ -200,6 +168,19 @@ Offline Queue → Database → File Storage
 - Input validation with Zod schemas
 - Idempotency keys prevent duplicate processing
 - API keys stored securely on server
+- **Private S3 bucket** with IAM-based access control
+
+## AI Processing
+
+### Transcription
+- **Provider**: OpenAI Whisper (`whisper-1`)
+- **Input**: Audio files (WAV, MP3, M4A, etc.)
+- **Output**: Text with language detection and confidence scores
+
+### Summarization
+- **Primary**: Google Gemini (`gemini-1.5-flash`)
+- **Fallback**: OpenAI GPT-4o-mini
+- **Output**: Concise meditation session summaries (≤80 words)
 
 ## Monitoring
 
@@ -207,21 +188,27 @@ Offline Queue → Database → File Storage
 - Structured logging with Morgan
 - Error tracking and reporting
 - Database connection monitoring
+- S3 upload/download monitoring
 
 ## Development
 
 ### Project Structure
 
 ```
-backend/
-├── src/
-│   ├── config/          # Database configuration
-│   ├── services/        # AI and S3 services
-│   ├── types/           # TypeScript type definitions
-│   └── server.ts        # Main server file
-├── migrations/          # Database migrations
-├── scripts/             # Utility scripts
-└── package.json
+VoiceRecorderWearOS/
+├── app/                    # Wear OS Android app
+│   ├── src/main/java/      # Kotlin source code
+│   └── build.gradle       # Android build configuration
+├── backend/                # Node.js backend
+│   ├── src/
+│   │   ├── config/        # Database configuration
+│   │   ├── services/       # AI and S3 services
+│   │   ├── types/          # TypeScript type definitions
+│   │   └── server.ts       # Main server file
+│   ├── migrations/         # Database migrations
+│   └── package.json
+├── test_option_c.sh        # End-to-end test script
+└── README.md
 ```
 
 ### Scripts
@@ -230,6 +217,7 @@ backend/
 - `npm run build` - Build TypeScript to JavaScript
 - `npm start` - Start production server
 - `npm run migrate` - Run database migrations
+- `./test_option_c.sh` - Test complete Option C flow
 
 ## 🎯 Next Steps
 
@@ -240,9 +228,9 @@ backend/
 
 ### For Production
 1. **Monitor Railway logs** for any issues
-2. **Set up alerts** for API errors
-3. **Consider S3 storage** for better file management
-4. **Add user accounts** if needed
+2. **Set up S3 lifecycle rules** to auto-delete old audio files
+3. **Monitor API usage** and costs
+4. **Consider adding user accounts** if needed
 
 ## 📊 Project Status
 
@@ -250,10 +238,11 @@ backend/
 |-----------|--------|-------|
 | Backend API | ✅ Deployed | Railway, PostgreSQL, all endpoints working |
 | Database | ✅ Migrated | All tables and indexes created |
+| S3 Storage | ✅ Configured | Private bucket with presigned URLs |
 | Authentication | ✅ Working | JWT tokens, anonymous users |
-| AI Processing | ✅ Working | Whisper + Gemini integration |
+| AI Processing | ✅ Working | Whisper + Gemini/OpenAI integration |
 | Android App | ✅ Built | Ready for installation |
-| File Storage | ✅ Working | Local storage on Railway |
+| Option C Flow | ✅ Tested | End-to-end working |
 
 ## 🏆 Achievement Unlocked
 
@@ -262,6 +251,7 @@ You now have a **fully functional voice recorder app** with:
 - ✅ **Wear OS app** ready to install
 - ✅ **Complete API** with authentication and file handling
 - ✅ **Database** with proper schema and migrations
+- ✅ **S3 integration** with private bucket and presigned URLs
 - ✅ **Live testing** confirmed working
 
 ## License
